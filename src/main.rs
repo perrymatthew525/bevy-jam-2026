@@ -64,7 +64,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         Sprite::from_color(ARENA_COLOR, WALL_SIZE_LONG),
         Transform::from_translation(Vec3::new(0.0, WALL_LENGTH / 2.0, 0.0)),
         Collider {
-            half_size: Vec2::new(WALL_SIZE_LONG.x / 2.0, WALL_SIZE_LONG.y / 2.0),
+            half_size: WALL_SIZE_LONG / 2.0,
         },
     ));
     // Bottom
@@ -72,7 +72,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         Sprite::from_color(ARENA_COLOR, WALL_SIZE_LONG),
         Transform::from_translation(Vec3::new(0.0, -(WALL_LENGTH / 2.0), 0.0)),
         Collider {
-            half_size: Vec2::new(WALL_SIZE_LONG.x / 2.0, WALL_SIZE_LONG.y / 2.0),
+            half_size: WALL_SIZE_LONG / 2.0,
         },
     ));
     // Right
@@ -80,7 +80,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         Sprite::from_color(ARENA_COLOR, WALL_SIZE_TALL),
         Transform::from_translation(Vec3::new(WALL_LENGTH / 2.0, 0.0, 0.0)),
         Collider {
-            half_size: Vec2::new(WALL_SIZE_TALL.x / 2.0, WALL_SIZE_TALL.y / 2.0),
+            half_size: WALL_SIZE_TALL / 2.0,
         },
     ));
     // Left
@@ -88,7 +88,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         Sprite::from_color(ARENA_COLOR, WALL_SIZE_TALL),
         Transform::from_translation(Vec3::new(-(WALL_LENGTH / 2.0), 0.0, 0.0)),
         Collider {
-            half_size: Vec2::new(WALL_SIZE_TALL.x / 2.0, WALL_SIZE_TALL.y / 2.0),
+            half_size: WALL_SIZE_TALL / 2.0,
         },
     ));
 }
@@ -139,17 +139,9 @@ fn collision(
                 let overlap =
                     hero_bounding_rect.half_size() + wall_bounding_rect.half_size() - delta.abs();
                 if overlap.x < overlap.y {
-                    hero_transform.translation.x += if delta.x.signum() > 0.0 {
-                        overlap.x
-                    } else {
-                        -overlap.x
-                    };
+                    hero_transform.translation.x += delta.x.signum() * overlap.x;
                 } else {
-                    hero_transform.translation.y += if delta.y.signum() > 0.0 {
-                        overlap.y
-                    } else {
-                        -overlap.y
-                    };
+                    hero_transform.translation.y += delta.y.signum() * overlap.y;
                 }
             }
         }
