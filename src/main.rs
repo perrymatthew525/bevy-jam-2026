@@ -1,0 +1,157 @@
+use bevy::asset::AssetMetaCheck;
+use bevy::prelude::*;
+
+const ARENA_COLOR: Color = Color::srgb(0.0, 0.25, 0.8);
+const WALL_THICKNESS: f32 = 30.0;
+const WALL_LENGTH: f32 = 1000.0;
+const WALL_SIZE_LONG: Vec2 = Vec2::new(WALL_LENGTH + WALL_THICKNESS, WALL_THICKNESS);
+const WALL_SIZE_TALL: Vec2 = Vec2::new(WALL_THICKNESS, WALL_LENGTH);
+const HERO_SPEED: f32 = 100.0;
+const HERO_WIDTH: f32 = 16.0;
+const HERO_HEIGHT: f32 = 24.0;
+
+#[derive(Component)]
+struct Hero;
+
+#[derive(Component)]
+struct Collider {
+    half_size: Vec2,
+}
+
+fn main() {
+    App::new()
+        .add_plugins(
+            DefaultPlugins
+                .set(AssetPlugin {
+                    // Wasm builds will check for meta files (that don't exist) if this isn't set.
+                    // This causes errors and even panics in web builds on itch.
+                    // See https://github.com/bevyengine/bevy_github_ci_template/issues/48.
+                    meta_check: AssetMetaCheck::Never,
+                    ..default()
+                })
+                // Default to nearest neighbor rendering
+                .set(ImagePlugin::default_nearest()),
+        )
+        .add_systems(Startup, setup)
+        .add_systems(Update, (movement, collision).chain())
+        .run();
+}
+
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn((
+        Camera2d,
+        Projection::Orthographic(OrthographicProjection {
+            scale: 2.0,
+            ..OrthographicProjection::default_2d()
+        }),
+    ));
+
+    // Hero
+    commands.spawn((
+        Sprite {
+            image: asset_server.load("Man1.png"),
+            ..Default::default()
+        },
+        Hero,
+        Collider {
+            half_size: Vec2::new(HERO_WIDTH / 2.0, HERO_HEIGHT / 2.0),
+        },
+    ));
+
+    // Arena
+    // Top
+    commands.spawn((
+        Sprite::from_color(ARENA_COLOR, WALL_SIZE_LONG),
+        Transform::from_translation(Vec3::new(0.0, WALL_LENGTH / 2.0, 0.0)),
+        Collider {
+            half_size: Vec2::new(WALL_SIZE_LONG.x / 2.0, WALL_SIZE_LONG.y / 2.0),
+        },
+    ));
+    // Bottom
+    commands.spawn((
+        Sprite::from_color(ARENA_COLOR, WALL_SIZE_LONG),
+        Transform::from_translation(Vec3::new(0.0, -(WALL_LENGTH / 2.0), 0.0)),
+        Collider {
+            half_size: Vec2::new(WALL_SIZE_LONG.x / 2.0, WALL_SIZE_LONG.y / 2.0),
+        },
+    ));
+    // Right
+    commands.spawn((
+        Sprite::from_color(ARENA_COLOR, WALL_SIZE_TALL),
+        Transform::from_translation(Vec3::new(WALL_LENGTH / 2.0, 0.0, 0.0)),
+        Collider {
+            half_size: Vec2::new(WALL_SIZE_TALL.x / 2.0, WALL_SIZE_TALL.y / 2.0),
+        },
+    ));
+    // Left
+    commands.spawn((
+        Sprite::from_color(ARENA_COLOR, WALL_SIZE_TALL),
+        Transform::from_translation(Vec3::new(-(WALL_LENGTH / 2.0), 0.0, 0.0)),
+        Collider {
+            half_size: Vec2::new(WALL_SIZE_TALL.x / 2.0, WALL_SIZE_TALL.y / 2.0),
+        },
+    ));
+}
+
+fn movement(
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut heroes: Query<&mut Transform, With<Hero>>,
+) {
+    let mut direction = Vec2::ZERO;
+
+    if keys.pressed(KeyCode::ArrowUp) || keys.pressed(KeyCode::KeyW) {
+        direction.y += 1.0;
+    }
+    if keys.pressed(KeyCode::ArrowDown) || keys.pressed(KeyCode::KeyS) {
+        direction.y -= 1.0;
+    }
+    if keys.pressed(KeyCode::ArrowRight) || keys.pressed(KeyCode::KeyD) {
+        direction.x += 1.0;
+    }
+    if keys.pressed(KeyCode::ArrowLeft) || keys.pressed(KeyCode::KeyA) {
+        direction.x -= 1.0;
+    }
+    direction = direction.normalize_or_zero();
+
+    for mut transform in &mut heroes {
+        transform.translation += (direction * HERO_SPEED * time.delta_secs()).extend(0.0);
+    }
+}
+
+fn collision(
+    mut heroes: Query<(&mut Transform, &Collider), With<Hero>>,
+    walls: Query<(&Transform, &Collider), Without<Hero>>,
+) {
+    for (mut hero_transform, hero_collider) in &mut heroes {
+        for (wall_transform, wall_collider) in &walls {
+            let hero_bounding_rect = Aabb2d::new(
+                hero_transform.translation.truncate(),
+                hero_collider.half_size,
+            );
+            let wall_bounding_rect = Aabb2d::new(
+                wall_transform.translation.truncate(),
+                wall_collider.half_size,
+            );
+
+            if hero_bounding_rect.intersects(&wall_bounding_rect) {
+                let delta = hero_bounding_rect.center() - wall_bounding_rect.center();
+                let overlap =
+                    hero_bounding_rect.half_size() + wall_bounding_rect.half_size() - delta.abs();
+                if overlap.x < overlap.y {
+                    hero_transform.translation.x += if delta.x.signum() > 0.0 {
+                        overlap.x
+                    } else {
+                        -overlap.x
+                    };
+                } else {
+                    hero_transform.translation.y += if delta.y.signum() > 0.0 {
+                        overlap.y
+                    } else {
+                        -overlap.y
+                    };
+                }
+            }
+        }
+    }
+}
