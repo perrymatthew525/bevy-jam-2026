@@ -17,6 +17,7 @@ opt-level = 3
 
 [dependencies]
 bevy = "0.20"
+rand = "0.10.3"
 
 # These lints may be important signals about code quality, but normal Bevy code
 # commonly triggers them and the CI workflow treats them as errors, so we've
@@ -26,3 +27,7 @@ bevy = "0.20"
 [lints.clippy]
 too_many_arguments = "allow"
 type_complexity = "allow"
+
+## Handle random numbers on web
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }

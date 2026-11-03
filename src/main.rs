@@ -1,17 +1,31 @@
+use std::time::Duration;
+
 use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
+use bevy::time::common_conditions::on_timer;
 
 const ARENA_COLOR: Color = Color::srgb(0.0, 0.25, 0.8);
+const ARENA_WIDTH: f32 = 500.0;
 const WALL_THICKNESS: f32 = 30.0;
-const WALL_LENGTH: f32 = 1000.0;
+const WALL_LENGTH: f32 = ARENA_WIDTH * 2.0;
 const WALL_SIZE_LONG: Vec2 = Vec2::new(WALL_LENGTH + WALL_THICKNESS, WALL_THICKNESS);
 const WALL_SIZE_TALL: Vec2 = Vec2::new(WALL_THICKNESS, WALL_LENGTH);
 const HERO_SPEED: f32 = 100.0;
 const HERO_WIDTH: f32 = 16.0;
 const HERO_HEIGHT: f32 = 24.0;
+const ENEMY_WIDTH: f32 = 16.0;
+const ENEMY_HEIGHT: f32 = 24.0;
 
 #[derive(Component)]
 struct Hero;
+
+#[derive(Component)]
+struct Enemy;
+
+#[derive(Component)]
+struct Health {
+    level: f32,
+}
 
 #[derive(Component)]
 struct Collider {
@@ -33,7 +47,8 @@ fn main() {
                 .set(ImagePlugin::default_nearest()),
         )
         .add_systems(Startup, setup)
-        .add_systems(Update, (movement, collision).chain())
+        .add_systems(Update, (hero_movement, wall_collision).chain())
+        .add_systems(Update, enemy_spawn.run_if(on_timer(Duration::from_secs(2))))
         .run();
 }
 
@@ -93,7 +108,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     ));
 }
 
-fn movement(
+fn hero_movement(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     mut heroes: Query<&mut Transform, With<Hero>>,
@@ -119,7 +134,7 @@ fn movement(
     }
 }
 
-fn collision(
+fn wall_collision(
     mut heroes: Query<(&mut Transform, &Collider), With<Hero>>,
     walls: Query<(&Transform, &Collider), Without<Hero>>,
 ) {
@@ -146,4 +161,20 @@ fn collision(
             }
         }
     }
+}
+
+fn enemy_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let x = rand::random_range(-ARENA_WIDTH..ARENA_WIDTH);
+    let y = rand::random_range(-ARENA_WIDTH..ARENA_WIDTH);
+    commands.spawn((
+        Sprite {
+            image: asset_server.load("Zombie.png"),
+            ..Default::default()
+        },
+        Enemy,
+        Transform::from_translation(Vec3::new(x, y, 0.0)),
+        Collider {
+            half_size: Vec2::new(ENEMY_WIDTH / 2.0, ENEMY_HEIGHT / 2.0),
+        },
+    ));
 }
