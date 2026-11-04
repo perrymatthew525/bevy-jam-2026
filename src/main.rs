@@ -36,6 +36,9 @@ struct Collider {
     half_size: Vec2,
 }
 
+#[derive(Resource)]
+struct EnemyLayout(Handle<TextureAtlasLayout>);
+
 fn main() {
     App::new()
         .add_plugins(
@@ -54,24 +57,42 @@ fn main() {
         .add_systems(Update, (hero_movement, wall_collision).chain())
         .add_systems(Update, enemy_spawn.run_if(on_timer(Duration::from_secs(2))))
         .add_systems(Update, enemy_movement)
+        .add_systems(
+            Update,
+            animate_sprites.run_if(on_timer(Duration::from_millis(200))),
+        )
         .run();
 }
 
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+) {
     commands.spawn((
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
-            scale: 2.0,
+            scale: 0.5,
             ..OrthographicProjection::default_2d()
         }),
     ));
 
+    // Enemy layout
+    let enemy_layout = TextureAtlasLayout::from_grid(UVec2::new(16, 24), 4, 1, None, None);
+    let enemy_layout_handle = texture_atlas_layouts.add(enemy_layout);
+    commands.insert_resource(EnemyLayout(enemy_layout_handle));
+
     // Hero
+    let hero_layout = TextureAtlasLayout::from_grid(UVec2::new(16, 24), 4, 1, None, None);
+    let hero_layout_handle = texture_atlas_layouts.add(hero_layout);
     commands.spawn((
-        Sprite {
-            image: asset_server.load("Man1.png"),
-            ..Default::default()
-        },
+        Sprite::from_atlas_image(
+            asset_server.load("Hero.png"),
+            TextureAtlas {
+                layout: hero_layout_handle,
+                index: 0,
+            },
+        ),
         Hero,
         Collider {
             half_size: Vec2::new(HERO_WIDTH / 2.0, HERO_HEIGHT / 2.0),
@@ -172,16 +193,23 @@ fn wall_collision(
     }
 }
 
-fn enemy_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn enemy_spawn(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    enemy_layout: Res<EnemyLayout>,
+) {
     let x =
         rand::random_range(-ARENA_HALF_WIDTH + WALL_THICKNESS..ARENA_HALF_WIDTH - WALL_THICKNESS);
     let y =
         rand::random_range(-ARENA_HALF_WIDTH + WALL_THICKNESS..ARENA_HALF_WIDTH - WALL_THICKNESS);
     commands.spawn((
-        Sprite {
-            image: asset_server.load("Zombie.png"),
-            ..Default::default()
-        },
+        Sprite::from_atlas_image(
+            asset_server.load("Enemy0.png"),
+            TextureAtlas {
+                layout: enemy_layout.0.clone(),
+                index: 0,
+            },
+        ),
         Enemy,
         Transform::from_translation(Vec3::new(x, y, 0.0)),
         Collider {
@@ -199,5 +227,13 @@ fn enemy_movement(
     let target = hero_transform.translation;
     for mut enemy_transform in &mut enemy_transforms {
         enemy_transform.translation = enemy_transform.translation.move_towards(target, speed);
+    }
+}
+
+fn animate_sprites(mut sprites: Query<&mut Sprite>) {
+    for mut sprite in &mut sprites {
+        if let Some(atlas) = &mut sprite.texture_atlas {
+            atlas.index = if atlas.index == 3 { 0 } else { atlas.index + 1 };
+        }
     }
 }
