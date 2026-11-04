@@ -5,14 +5,15 @@ use bevy::prelude::*;
 use bevy::time::common_conditions::on_timer;
 
 const ARENA_COLOR: Color = Color::srgb(0.0, 0.25, 0.8);
-const ARENA_WIDTH: f32 = 500.0;
+const ARENA_HALF_WIDTH: f32 = 500.0;
 const WALL_THICKNESS: f32 = 30.0;
-const WALL_LENGTH: f32 = ARENA_WIDTH * 2.0;
+const WALL_LENGTH: f32 = ARENA_HALF_WIDTH * 2.0;
 const WALL_SIZE_LONG: Vec2 = Vec2::new(WALL_LENGTH + WALL_THICKNESS, WALL_THICKNESS);
 const WALL_SIZE_TALL: Vec2 = Vec2::new(WALL_THICKNESS, WALL_LENGTH);
 const HERO_SPEED: f32 = 100.0;
 const HERO_WIDTH: f32 = 16.0;
 const HERO_HEIGHT: f32 = 24.0;
+const ENEMY_SPEED: f32 = 50.0;
 const ENEMY_WIDTH: f32 = 16.0;
 const ENEMY_HEIGHT: f32 = 24.0;
 
@@ -21,6 +22,9 @@ struct Hero;
 
 #[derive(Component)]
 struct Enemy;
+
+#[derive(Component)]
+struct Wall;
 
 #[derive(Component)]
 struct Health {
@@ -49,6 +53,7 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(Update, (hero_movement, wall_collision).chain())
         .add_systems(Update, enemy_spawn.run_if(on_timer(Duration::from_secs(2))))
+        .add_systems(Update, enemy_movement)
         .run();
 }
 
@@ -81,6 +86,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         Collider {
             half_size: WALL_SIZE_LONG / 2.0,
         },
+        Wall,
     ));
     // Bottom
     commands.spawn((
@@ -89,6 +95,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         Collider {
             half_size: WALL_SIZE_LONG / 2.0,
         },
+        Wall,
     ));
     // Right
     commands.spawn((
@@ -97,6 +104,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         Collider {
             half_size: WALL_SIZE_TALL / 2.0,
         },
+        Wall,
     ));
     // Left
     commands.spawn((
@@ -105,6 +113,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         Collider {
             half_size: WALL_SIZE_TALL / 2.0,
         },
+        Wall,
     ));
 }
 
@@ -136,7 +145,7 @@ fn hero_movement(
 
 fn wall_collision(
     mut heroes: Query<(&mut Transform, &Collider), With<Hero>>,
-    walls: Query<(&Transform, &Collider), Without<Hero>>,
+    walls: Query<(&Transform, &Collider), (With<Wall>, Without<Hero>)>,
 ) {
     for (mut hero_transform, hero_collider) in &mut heroes {
         for (wall_transform, wall_collider) in &walls {
@@ -164,8 +173,10 @@ fn wall_collision(
 }
 
 fn enemy_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let x = rand::random_range(-ARENA_WIDTH..ARENA_WIDTH);
-    let y = rand::random_range(-ARENA_WIDTH..ARENA_WIDTH);
+    let x =
+        rand::random_range(-ARENA_HALF_WIDTH + WALL_THICKNESS..ARENA_HALF_WIDTH - WALL_THICKNESS);
+    let y =
+        rand::random_range(-ARENA_HALF_WIDTH + WALL_THICKNESS..ARENA_HALF_WIDTH - WALL_THICKNESS);
     commands.spawn((
         Sprite {
             image: asset_server.load("Zombie.png"),
@@ -177,4 +188,16 @@ fn enemy_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
             half_size: Vec2::new(ENEMY_WIDTH / 2.0, ENEMY_HEIGHT / 2.0),
         },
     ));
+}
+
+fn enemy_movement(
+    time: Res<Time>,
+    hero_transform: Single<&Transform, With<Hero>>,
+    mut enemy_transforms: Query<&mut Transform, (With<Enemy>, Without<Hero>)>,
+) {
+    let speed = ENEMY_SPEED * time.delta_secs();
+    let target = hero_transform.translation;
+    for mut enemy_transform in &mut enemy_transforms {
+        enemy_transform.translation = enemy_transform.translation.move_towards(target, speed);
+    }
 }
