@@ -22,8 +22,8 @@ const ENEMY_WIDTH: f32 = 16.0;
 const ENEMY_HEIGHT: f32 = 24.0;
 const ENEMY_Z: f32 = 1.0;
 const FLOOR_Z: f32 = 0.0;
-const PAINT_CELL_SIZE: f32 = 1.0;
-const SPLAT_RADIUS: i32 = 20;
+const PAINT_CELL_SIZE: f32 = 2.0;
+const SPLAT_RADIUS: i32 = 10;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum Paint {
@@ -360,25 +360,25 @@ fn draw_paint(
         return;
     };
 
-    for _col in cell_column as i32 - SPLAT_RADIUS..cell_column as i32 + SPLAT_RADIUS {
-        for _row in cell_row as i32 - SPLAT_RADIUS..cell_row as i32 + SPLAT_RADIUS {
-            if !(0.0..paint_grid.width as f32).contains(&(_col as f32))
-                || !(0.0..paint_grid.height as f32).contains(&(_row as f32))
+    for col in cell_column as i32 - SPLAT_RADIUS..=cell_column as i32 + SPLAT_RADIUS {
+        for row in cell_row as i32 - SPLAT_RADIUS..=cell_row as i32 + SPLAT_RADIUS {
+            if !(0..paint_grid.width as i32).contains(&col)
+                || !(0..paint_grid.height as i32).contains(&row)
             {
                 continue;
             }
 
-            let dc = cell_column as i32 - _col;
-            let dr = cell_row as i32 - _row;
+            let dc = cell_column as i32 - col;
+            let dr = cell_row as i32 - row;
             if (dc * dc) + (dr * dr) > (SPLAT_RADIUS * SPLAT_RADIUS) {
                 continue;
             }
 
-            let _row = _row as usize;
-            let _col = _col as usize;
+            let row = row as usize;
+            let col = col as usize;
             let paint_grid_width = paint_grid.width;
-            paint_grid.cells[_row * paint_grid_width + _col] = Paint::Lead;
-            let _ = image.set_color_at(_col as u32, _row as u32, Paint::Lead.color());
+            paint_grid.cells[row * paint_grid_width + col] = Paint::Lead;
+            let _ = image.set_color_at(col as u32, row as u32, Paint::Lead.color());
         }
     }
 }
