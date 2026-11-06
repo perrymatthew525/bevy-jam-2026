@@ -1,6 +1,8 @@
 use std::time::Duration;
 
 use bevy::asset::{AssetMetaCheck, RenderAssetUsages};
+use bevy::color::palettes::css::BLACK;
+use bevy::color::palettes::{basic, css};
 use bevy::math::ops::floor;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -38,12 +40,16 @@ impl Paint {
     fn color(self) -> Color {
         match self {
             // MP | TODO: Use the real colors
-            Self::None => Color::srgba(1.0, 0.0, 0.0, 1.0),
-            Self::Lead => Color::srgba(0.0, 0.0, 1.0, 1.0),
-            Self::Iron => Color::srgba(0.0, 1.0, 0.0, 1.0),
-            Self::Silver => Color::srgba(1.0, 1.0, 0.0, 1.0),
-            Self::Gold => Color::srgba(1.0, 0.0, 1.0, 1.0),
+            Self::None => css::GREEN.into(),
+            Self::Lead => css::DIM_GRAY.into(),
+            Self::Iron => css::SLATE_GRAY.into(),
+            Self::Silver => basic::SILVER.into(),
+            Self::Gold => css::GOLD.into(),
         }
+    }
+
+    fn sprite_color(self) -> Color {
+        self.color().mix(&Color::WHITE, 0.5)
     }
 }
 
@@ -106,6 +112,7 @@ fn main() {
             animate_sprites.run_if(on_timer(Duration::from_millis(200))),
         )
         .add_systems(Update, draw_paint)
+        .add_systems(Update, recolor_sprite)
         .run();
 }
 
@@ -390,6 +397,28 @@ fn draw_paint(
             let paint_grid_width = paint_grid.width;
             paint_grid.cells[row * paint_grid_width + col] = Paint::Lead;
             let _ = image.set_color_at(col as u32, row as u32, Paint::Lead.color());
+        }
+    }
+}
+
+fn recolor_sprite(
+    paint_grid: Res<PaintGrid>,
+    query: Query<(&Transform, &mut Sprite), Or<(With<Hero>, With<Enemy>)>>,
+) {
+    for (transform, mut sprite) in query {
+        let cell_col =
+            floor((transform.translation.x + ARENA_HALF_WIDTH) / PAINT_CELL_SIZE) as usize;
+        let cell_row =
+            floor((ARENA_HALF_WIDTH - transform.translation.y) / PAINT_CELL_SIZE) as usize;
+        if !(0..paint_grid.width).contains(&cell_col) || !(0..paint_grid.height).contains(&cell_row)
+        {
+            continue;
+        }
+
+        let paint_grid_width = paint_grid.width;
+        let ground_color_cell = paint_grid.cells[cell_row * paint_grid_width + cell_col];
+        if sprite.color != ground_color_cell.sprite_color() {
+            sprite.color = ground_color_cell.sprite_color();
         }
     }
 }
