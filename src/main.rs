@@ -100,7 +100,7 @@ fn main() {
             (hero_movement, wall_collision, update_camera).chain(),
         )
         .add_systems(Update, enemy_spawn.run_if(on_timer(Duration::from_secs(2))))
-        .add_systems(Update, enemy_movement)
+        .add_systems(Update, (enemy_movement, enemy_collision))
         .add_systems(
             Update,
             animate_sprites.run_if(on_timer(Duration::from_millis(200))),
@@ -311,6 +311,24 @@ fn enemy_movement(
     let target = hero_transform.translation;
     for mut enemy_transform in &mut enemy_transforms {
         enemy_transform.translation = enemy_transform.translation.move_towards(target, speed);
+    }
+}
+
+fn enemy_collision(mut query: Query<(&mut Transform, &Collider), With<Enemy>>) {
+    let mut iter = query.iter_combinations_mut();
+    while let Some([(mut transform1, collider1), (transform2, collider2)]) = iter.fetch_next() {
+        let bounding_rect_1 = Aabb2d::new(transform1.translation.truncate(), collider1.half_size);
+        let bounding_rect_2 = Aabb2d::new(transform2.translation.truncate(), collider2.half_size);
+
+        if bounding_rect_1.intersects(&bounding_rect_2) {
+            let delta = bounding_rect_1.center() - bounding_rect_2.center();
+            let overlap = bounding_rect_1.half_size() + bounding_rect_2.half_size() - delta.abs();
+            if overlap.x < overlap.y {
+                transform1.translation.x += delta.x.signum() * overlap.x;
+            } else {
+                transform1.translation.y += delta.y.signum() * overlap.y;
+            }
+        }
     }
 }
 
