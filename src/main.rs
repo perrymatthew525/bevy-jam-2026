@@ -1,7 +1,9 @@
 use std::time::Duration;
 
-use bevy::asset::AssetMetaCheck;
+use bevy::asset::{AssetMetaCheck, RenderAssetUsages};
+use bevy::math::ops::floor;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::time::common_conditions::on_timer;
 
 const ARENA_COLOR: Color = Color::srgb(0.0, 0.25, 0.8);
@@ -10,12 +12,40 @@ const WALL_THICKNESS: f32 = 30.0;
 const WALL_LENGTH: f32 = ARENA_HALF_WIDTH * 2.0;
 const WALL_SIZE_LONG: Vec2 = Vec2::new(WALL_LENGTH + WALL_THICKNESS, WALL_THICKNESS);
 const WALL_SIZE_TALL: Vec2 = Vec2::new(WALL_THICKNESS, WALL_LENGTH);
+const WALL_Z: f32 = 2.0;
 const HERO_SPEED: f32 = 100.0;
 const HERO_WIDTH: f32 = 16.0;
 const HERO_HEIGHT: f32 = 24.0;
+const HERO_Z: f32 = 1.0;
 const ENEMY_SPEED: f32 = 50.0;
 const ENEMY_WIDTH: f32 = 16.0;
 const ENEMY_HEIGHT: f32 = 24.0;
+const ENEMY_Z: f32 = 1.0;
+const FLOOR_Z: f32 = 0.0;
+const PAINT_CELL_SIZE: f32 = 1.0;
+const SPLAT_RADIUS: i32 = 20;
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+enum Paint {
+    None,
+    Lead,
+    Iron,
+    Silver,
+    Gold,
+}
+
+impl Paint {
+    fn color(self) -> Color {
+        match self {
+            // MP | TODO: Use the real colors
+            Self::None => Color::srgba(1.0, 0.0, 0.0, 1.0),
+            Self::Lead => Color::srgba(0.0, 0.0, 1.0, 1.0),
+            Self::Iron => Color::srgba(0.0, 1.0, 0.0, 1.0),
+            Self::Silver => Color::srgba(1.0, 1.0, 0.0, 1.0),
+            Self::Gold => Color::srgba(1.0, 0.0, 1.0, 1.0),
+        }
+    }
+}
 
 #[derive(Component)]
 struct Hero;
@@ -39,6 +69,17 @@ struct Collider {
 #[derive(Resource)]
 struct EnemyLayout(Handle<TextureAtlasLayout>);
 
+#[derive(Resource)]
+struct FloorImage(Handle<Image>);
+
+#[derive(Resource)]
+struct PaintGrid {
+    width: usize,
+    height: usize,
+    cell_size: f32,
+    cells: Vec<Paint>,
+}
+
 fn main() {
     App::new()
         .add_plugins(
@@ -54,13 +95,17 @@ fn main() {
                 .set(ImagePlugin::default_nearest()),
         )
         .add_systems(Startup, setup)
-        .add_systems(Update, (hero_movement, wall_collision).chain())
+        .add_systems(
+            Update,
+            (hero_movement, wall_collision, update_camera).chain(),
+        )
         .add_systems(Update, enemy_spawn.run_if(on_timer(Duration::from_secs(2))))
         .add_systems(Update, enemy_movement)
         .add_systems(
             Update,
             animate_sprites.run_if(on_timer(Duration::from_millis(200))),
         )
+        .add_systems(Update, draw_paint)
         .run();
 }
 
@@ -68,6 +113,7 @@ fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     commands.spawn((
         Camera2d,
@@ -86,14 +132,18 @@ fn setup(
     let hero_layout = TextureAtlasLayout::from_grid(UVec2::new(16, 24), 4, 1, None, None);
     let hero_layout_handle = texture_atlas_layouts.add(hero_layout);
     commands.spawn((
-        Sprite::from_atlas_image(
-            asset_server.load("Hero.png"),
-            TextureAtlas {
-                layout: hero_layout_handle,
-                index: 0,
-            },
-        ),
+        Sprite {
+            color: Color::srgba(0.5, 0.8, 1.0, 0.7),
+            ..Sprite::from_atlas_image(
+                asset_server.load("Hero.png"),
+                TextureAtlas {
+                    layout: hero_layout_handle,
+                    index: 0,
+                },
+            )
+        },
         Hero,
+        Transform::from_xyz(0.0, 0.0, HERO_Z),
         Collider {
             half_size: Vec2::new(HERO_WIDTH / 2.0, HERO_HEIGHT / 2.0),
         },
@@ -103,7 +153,7 @@ fn setup(
     // Top
     commands.spawn((
         Sprite::from_color(ARENA_COLOR, WALL_SIZE_LONG),
-        Transform::from_translation(Vec3::new(0.0, WALL_LENGTH / 2.0, 0.0)),
+        Transform::from_translation(Vec3::new(0.0, WALL_LENGTH / 2.0, WALL_Z)),
         Collider {
             half_size: WALL_SIZE_LONG / 2.0,
         },
@@ -112,7 +162,7 @@ fn setup(
     // Bottom
     commands.spawn((
         Sprite::from_color(ARENA_COLOR, WALL_SIZE_LONG),
-        Transform::from_translation(Vec3::new(0.0, -(WALL_LENGTH / 2.0), 0.0)),
+        Transform::from_translation(Vec3::new(0.0, -(WALL_LENGTH / 2.0), WALL_Z)),
         Collider {
             half_size: WALL_SIZE_LONG / 2.0,
         },
@@ -121,7 +171,7 @@ fn setup(
     // Right
     commands.spawn((
         Sprite::from_color(ARENA_COLOR, WALL_SIZE_TALL),
-        Transform::from_translation(Vec3::new(WALL_LENGTH / 2.0, 0.0, 0.0)),
+        Transform::from_translation(Vec3::new(WALL_LENGTH / 2.0, 0.0, WALL_Z)),
         Collider {
             half_size: WALL_SIZE_TALL / 2.0,
         },
@@ -130,11 +180,42 @@ fn setup(
     // Left
     commands.spawn((
         Sprite::from_color(ARENA_COLOR, WALL_SIZE_TALL),
-        Transform::from_translation(Vec3::new(-(WALL_LENGTH / 2.0), 0.0, 0.0)),
+        Transform::from_translation(Vec3::new(-(WALL_LENGTH / 2.0), 0.0, WALL_Z)),
         Collider {
             half_size: WALL_SIZE_TALL / 2.0,
         },
         Wall,
+    ));
+
+    // Floor
+    let paint_width = ((ARENA_HALF_WIDTH * 2.0) / PAINT_CELL_SIZE) as usize;
+    let paint_height = ((ARENA_HALF_WIDTH * 2.0) / PAINT_CELL_SIZE) as usize;
+    let paint_grid = PaintGrid {
+        width: paint_width,
+        height: paint_height,
+        cell_size: PAINT_CELL_SIZE,
+        cells: vec![Paint::None; paint_width * paint_height],
+    };
+    let floor_image = Image::new_fill(
+        Extent3d {
+            width: paint_grid.width as u32,
+            height: paint_grid.height as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &(Paint::None.color().to_srgba().to_u8_array()),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    let floor_image_handle = images.add(floor_image);
+    commands.insert_resource(FloorImage(floor_image_handle.clone()));
+    commands.insert_resource(paint_grid);
+    commands.spawn((
+        Sprite {
+            custom_size: Some(Vec2::new(ARENA_HALF_WIDTH * 2.0, ARENA_HALF_WIDTH * 2.0)),
+            ..Sprite::from_image(floor_image_handle)
+        },
+        Transform::from_xyz(0.0, 0.0, FLOOR_Z),
     ));
 }
 
@@ -203,15 +284,18 @@ fn enemy_spawn(
     let y =
         rand::random_range(-ARENA_HALF_WIDTH + WALL_THICKNESS..ARENA_HALF_WIDTH - WALL_THICKNESS);
     commands.spawn((
-        Sprite::from_atlas_image(
-            asset_server.load("Enemy0.png"),
-            TextureAtlas {
-                layout: enemy_layout.0.clone(),
-                index: 0,
-            },
-        ),
+        Sprite {
+            color: Color::srgba(01.0, 0.2, 10.3, 0.7),
+            ..Sprite::from_atlas_image(
+                asset_server.load("Enemy0.png"),
+                TextureAtlas {
+                    layout: enemy_layout.0.clone(),
+                    index: 0,
+                },
+            )
+        },
         Enemy,
-        Transform::from_translation(Vec3::new(x, y, 0.0)),
+        Transform::from_translation(Vec3::new(x, y, ENEMY_Z)),
         Collider {
             half_size: Vec2::new(ENEMY_WIDTH / 2.0, ENEMY_HEIGHT / 2.0),
         },
@@ -234,6 +318,67 @@ fn animate_sprites(mut sprites: Query<&mut Sprite>) {
     for mut sprite in &mut sprites {
         if let Some(atlas) = &mut sprite.texture_atlas {
             atlas.index = if atlas.index == 3 { 0 } else { atlas.index + 1 };
+        }
+    }
+}
+
+fn update_camera(
+    mut camera: Single<&mut Transform, (With<Camera2d>, Without<Hero>)>,
+    hero: Single<&Transform, (With<Hero>, Without<Camera2d>)>,
+) {
+    let Vec3 { x, y, .. } = hero.translation;
+    let direction = Vec3::new(x, y, camera.translation.z);
+
+    camera.translation = direction;
+}
+
+fn draw_paint(
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    window: Single<&Window>,
+    camera_query: Single<(&Camera, &GlobalTransform)>,
+    mut paint_grid: ResMut<PaintGrid>,
+    floor_image: Res<FloorImage>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    if !mouse_button.pressed(MouseButton::Left) {
+        return;
+    }
+
+    let (camera, camera_transform) = *camera_query;
+    let Some(cursor_position) = window.cursor_position() else {
+        return;
+    };
+    let Ok(world_click_position) = camera.viewport_to_world_2d(camera_transform, cursor_position)
+    else {
+        return;
+    };
+
+    let cell_column = floor((world_click_position.x + ARENA_HALF_WIDTH) / PAINT_CELL_SIZE);
+    let cell_row = floor((ARENA_HALF_WIDTH - world_click_position.y) / PAINT_CELL_SIZE);
+
+    let Some(mut image) = images.get_mut(&floor_image.0) else {
+        return;
+    };
+
+    for _col in cell_column as i32 - SPLAT_RADIUS..cell_column as i32 + SPLAT_RADIUS {
+        for _row in cell_row as i32 - SPLAT_RADIUS..cell_row as i32 + SPLAT_RADIUS {
+            if !(0.0..paint_grid.width as f32).contains(&(_col as f32))
+                || !(0.0..paint_grid.height as f32).contains(&(_row as f32))
+            {
+                continue;
+            }
+
+            let dc = cell_column as i32 - _col;
+            let dr = cell_row as i32 - _row;
+            if (dc * dc) + (dr * dr) > (SPLAT_RADIUS * SPLAT_RADIUS) {
+                continue;
+            }
+
+            let _row = _row as usize;
+            let _col = _col as usize;
+            let paint_grid_width = paint_grid.width;
+            paint_grid.cells[_row * paint_grid_width + _col] = Paint::Lead;
+            let _ = image.set_color_at(_col as u32, _row as u32, Paint::Lead.color());
         }
     }
 }
