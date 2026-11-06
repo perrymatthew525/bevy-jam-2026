@@ -222,7 +222,7 @@ fn setup(
 fn hero_movement(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    mut heroes: Query<&mut Transform, With<Hero>>,
+    mut hero: Single<&mut Transform, With<Hero>>,
 ) {
     let mut direction = Vec2::ZERO;
 
@@ -240,35 +240,28 @@ fn hero_movement(
     }
     direction = direction.normalize_or_zero();
 
-    for mut transform in &mut heroes {
-        transform.translation += (direction * HERO_SPEED * time.delta_secs()).extend(0.0);
-    }
+    hero.translation += (direction * HERO_SPEED * time.delta_secs()).extend(0.0);
 }
 
 fn wall_collision(
-    mut heroes: Query<(&mut Transform, &Collider), With<Hero>>,
+    mut hero: Single<(&mut Transform, &Collider), With<Hero>>,
     walls: Query<(&Transform, &Collider), (With<Wall>, Without<Hero>)>,
 ) {
-    for (mut hero_transform, hero_collider) in &mut heroes {
-        for (wall_transform, wall_collider) in &walls {
-            let hero_bounding_rect = Aabb2d::new(
-                hero_transform.translation.truncate(),
-                hero_collider.half_size,
-            );
-            let wall_bounding_rect = Aabb2d::new(
-                wall_transform.translation.truncate(),
-                wall_collider.half_size,
-            );
+    for (wall_transform, wall_collider) in &walls {
+        let hero_bounding_rect = Aabb2d::new(hero.0.translation.truncate(), hero.1.half_size);
+        let wall_bounding_rect = Aabb2d::new(
+            wall_transform.translation.truncate(),
+            wall_collider.half_size,
+        );
 
-            if hero_bounding_rect.intersects(&wall_bounding_rect) {
-                let delta = hero_bounding_rect.center() - wall_bounding_rect.center();
-                let overlap =
-                    hero_bounding_rect.half_size() + wall_bounding_rect.half_size() - delta.abs();
-                if overlap.x < overlap.y {
-                    hero_transform.translation.x += delta.x.signum() * overlap.x;
-                } else {
-                    hero_transform.translation.y += delta.y.signum() * overlap.y;
-                }
+        if hero_bounding_rect.intersects(&wall_bounding_rect) {
+            let delta = hero_bounding_rect.center() - wall_bounding_rect.center();
+            let overlap =
+                hero_bounding_rect.half_size() + wall_bounding_rect.half_size() - delta.abs();
+            if overlap.x < overlap.y {
+                hero.0.translation.x += delta.x.signum() * overlap.x;
+            } else {
+                hero.0.translation.y += delta.y.signum() * overlap.y;
             }
         }
     }
