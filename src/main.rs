@@ -49,7 +49,7 @@ impl Paint {
     }
 
     fn sprite_color(self) -> Color {
-        self.color().mix(&Color::WHITE, 0.5)
+        self.color().mix(&Color::WHITE, 0.2)
     }
 }
 
@@ -140,7 +140,7 @@ fn setup(
     let hero_layout_handle = texture_atlas_layouts.add(hero_layout);
     commands.spawn((
         Sprite {
-            color: Color::srgba(0.5, 0.8, 1.0, 0.7),
+            color: Color::srgba(0.5, 0.8, 1.0, 1.0),
             ..Sprite::from_atlas_image(
                 asset_server.load("Hero.png"),
                 TextureAtlas {
@@ -285,7 +285,7 @@ fn enemy_spawn(
         rand::random_range(-ARENA_HALF_WIDTH + WALL_THICKNESS..ARENA_HALF_WIDTH - WALL_THICKNESS);
     commands.spawn((
         Sprite {
-            color: Color::srgba(01.0, 0.2, 10.3, 0.7),
+            color: Color::srgba(01.0, 0.2, 10.3, 1.0),
             ..Sprite::from_atlas_image(
                 asset_server.load("Enemy0.png"),
                 TextureAtlas {
