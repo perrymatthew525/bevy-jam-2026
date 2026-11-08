@@ -617,6 +617,8 @@ fn enemy_hero_collision(
     mut hero: Single<(&Transform, &Collider, &mut Hero), With<Hero>>,
     mut enemy_query: Query<(&mut Transform, &Collider), (With<Enemy>, Without<Hero>)>,
     mut hurt_timer: ResMut<HurtTimer>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
 ) {
     let (hero_transform, hero_collider, hero_self) = &mut *hero;
     for (mut enemy_transform, enemy_collider) in &mut enemy_query {
@@ -637,6 +639,10 @@ fn enemy_hero_collision(
             enemy_transform.translation.x += delta.x.signum() * (overlap.x + KNOCKBACK);
             enemy_transform.translation.y += delta.y.signum() * (overlap.y + KNOCKBACK);
             hero_self.hitpoints = hero_self.hitpoints.saturating_sub(ENEMY_DAMAGE);
+            commands.spawn((
+                AudioPlayer::new(asset_server.load("23_orc_jump_land.wav")),
+                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.5)),
+            ));
         }
     }
 }
