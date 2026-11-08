@@ -6,9 +6,11 @@ use bevy::audio::Volume;
 use bevy::color::palettes::{basic, css};
 use bevy::ecs::system::command;
 use bevy::math::ops::floor;
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::time::common_conditions::on_timer;
+use bevy::ui_widgets::{Activate, ActivateOnPress, Button};
 
 const ARENA_COLOR: Color = Color::srgb(0.0, 0.25, 0.8);
 const ARENA_HALF_WIDTH: f32 = 500.0;
@@ -38,6 +40,7 @@ const KNOCKBACK: f32 = 20.0;
 const HP_FONT_SIZE: f32 = 20.0;
 const TEXT_COLOR: Color = Color::srgb_u8(191, 9, 47);
 const HP_TEXT_PADDING: f32 = 10.0;
+const MENU_BUTTON_BG_COLOR: Color = Color::srgb_u8(190, 190, 190);
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum Paint {
@@ -141,6 +144,14 @@ struct PaintGrid {
     cells: Vec<Paint>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
+enum AppState {
+    #[default]
+    Menu,
+    Playing,
+    GameOver,
+}
+
 fn main() {
     App::new()
         .add_plugins(
@@ -155,43 +166,87 @@ fn main() {
                 // Default to nearest neighbor rendering
                 .set(ImagePlugin::default_nearest()),
         )
+        .init_state::<AppState>()
+        .add_systems(OnEnter(AppState::Menu), setup_menu)
         .add_systems(Startup, setup)
+        .add_observer(on_activate_start_game.run_if(in_state(AppState::Menu)))
+        .add_systems(OnEnter(AppState::Playing), setup_game)
         .add_systems(
             Update,
-            (hero_movement, wall_collision, update_camera).chain(),
+            (hero_movement, wall_collision, update_camera)
+                .chain()
+                .run_if(in_state(AppState::Playing)),
         )
         .add_systems(
             Update,
-            enemy_spawn.run_if(on_timer(Duration::from_millis(500))),
+            enemy_spawn
+                .run_if(on_timer(Duration::from_millis(500)))
+                .run_if(in_state(AppState::Playing)),
         )
         .add_systems(
             Update,
-            (enemy_movement, enemy_collision, enemy_hero_collision),
+            (enemy_movement, enemy_collision, enemy_hero_collision)
+                .run_if(in_state(AppState::Playing)),
         )
         .add_systems(
             Update,
-            animate_sprites.run_if(on_timer(Duration::from_millis(200))),
+            animate_sprites
+                .run_if(on_timer(Duration::from_millis(200)))
+                .run_if(in_state(AppState::Playing)),
         )
-        .add_systems(Update, draw_paint)
-        .add_systems(Update, recolor_sprite)
+        // .add_systems(Update, draw_paint.run_if(in_state(AppState::Playing)))
+        .add_systems(Update, recolor_sprite.run_if(in_state(AppState::Playing)))
         .add_systems(
             Update,
-            fire_bullets.run_if(on_timer(Duration::from_millis(300))),
+            fire_bullets
+                .run_if(on_timer(Duration::from_millis(300)))
+                .run_if(in_state(AppState::Playing)),
         )
-        .add_systems(Update, (move_bullets, bullet_collision))
-        .add_systems(Update, hp_ui)
         .add_systems(
             Update,
-            arena_state_ui.run_if(on_timer(Duration::from_millis(200))),
+            (move_bullets, bullet_collision).run_if(in_state(AppState::Playing)),
+        )
+        .add_systems(Update, hp_ui.run_if(in_state(AppState::Playing)))
+        .add_systems(
+            Update,
+            arena_state_ui
+                .run_if(on_timer(Duration::from_millis(200)))
+                .run_if(in_state(AppState::Playing)),
         )
         .run();
+}
+
+fn setup_menu(mut commands: Commands) {
+    commands.spawn((
+        Node {
+            width: percent(100),
+            height: percent(100),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        children![(
+            Button,
+            ActivateOnPress,
+            Hovered::default(),
+            Node {
+                width: px(150),
+                height: px(65),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(MENU_BUTTON_BG_COLOR),
+            children![(Text::new("Play") /* TextFont, TextColor */,)]
+        )],
+        DespawnOnExit(AppState::Menu),
+    ));
 }
 
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
-    mut images: ResMut<Assets<Image>>,
 ) {
     commands.spawn((
         Camera2d,
@@ -214,7 +269,14 @@ fn setup(
     let enemy_layout = TextureAtlasLayout::from_grid(UVec2::new(16, 24), 4, 1, None, None);
     let enemy_layout_handle = texture_atlas_layouts.add(enemy_layout);
     commands.insert_resource(EnemyLayout(enemy_layout_handle));
+}
 
+fn setup_game(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+    mut images: ResMut<Assets<Image>>,
+) {
     // Hero
     let hero_layout = TextureAtlasLayout::from_grid(UVec2::new(16, 24), 4, 1, None, None);
     let hero_layout_handle = texture_atlas_layouts.add(hero_layout);
@@ -311,6 +373,37 @@ fn setup(
         ],
     ));
 
+    // Floor
+    let paint_width = ((ARENA_HALF_WIDTH * 2.0) / PAINT_CELL_SIZE) as usize;
+    let paint_height = ((ARENA_HALF_WIDTH * 2.0) / PAINT_CELL_SIZE) as usize;
+    let paint_grid = PaintGrid {
+        width: paint_width,
+        height: paint_height,
+        cell_size: PAINT_CELL_SIZE,
+        cells: vec![Paint::None; paint_width * paint_height],
+    };
+    let floor_image = Image::new_fill(
+        Extent3d {
+            width: paint_grid.width as u32,
+            height: paint_grid.height as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &(Paint::None.ground_color().to_srgba().to_u8_array()),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    let floor_image_handle = images.add(floor_image);
+    commands.insert_resource(FloorImage(floor_image_handle.clone()));
+    commands.insert_resource(paint_grid);
+    commands.spawn((
+        Sprite {
+            custom_size: Some(Vec2::new(ARENA_HALF_WIDTH * 2.0, ARENA_HALF_WIDTH * 2.0)),
+            ..Sprite::from_image(floor_image_handle)
+        },
+        Transform::from_xyz(0.0, 0.0, FLOOR_Z),
+    ));
+
     // Arena
     // Top
     commands.spawn((
@@ -347,37 +440,6 @@ fn setup(
             half_size: WALL_SIZE_TALL / 2.0,
         },
         Wall,
-    ));
-
-    // Floor
-    let paint_width = ((ARENA_HALF_WIDTH * 2.0) / PAINT_CELL_SIZE) as usize;
-    let paint_height = ((ARENA_HALF_WIDTH * 2.0) / PAINT_CELL_SIZE) as usize;
-    let paint_grid = PaintGrid {
-        width: paint_width,
-        height: paint_height,
-        cell_size: PAINT_CELL_SIZE,
-        cells: vec![Paint::None; paint_width * paint_height],
-    };
-    let floor_image = Image::new_fill(
-        Extent3d {
-            width: paint_grid.width as u32,
-            height: paint_grid.height as u32,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &(Paint::None.ground_color().to_srgba().to_u8_array()),
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    );
-    let floor_image_handle = images.add(floor_image);
-    commands.insert_resource(FloorImage(floor_image_handle.clone()));
-    commands.insert_resource(paint_grid);
-    commands.spawn((
-        Sprite {
-            custom_size: Some(Vec2::new(ARENA_HALF_WIDTH * 2.0, ARENA_HALF_WIDTH * 2.0)),
-            ..Sprite::from_image(floor_image_handle)
-        },
-        Transform::from_xyz(0.0, 0.0, FLOOR_Z),
     ));
 }
 
@@ -816,4 +878,8 @@ fn arena_state_ui(
     iron_text.0 = format!("Iron: {:.2}%", ironCount / totalCount * 100.0);
     silver_text.0 = format!("Silver: {:.2}%", silverCount / totalCount * 100.0);
     gold_text.0 = format!("Gold: {:.2}%", goldCount / totalCount * 100.0);
+}
+
+fn on_activate_start_game(_: On<Activate>, mut next_state: ResMut<NextState<AppState>>) {
+    next_state.set(AppState::Playing);
 }
