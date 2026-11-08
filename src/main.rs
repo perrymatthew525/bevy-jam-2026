@@ -35,6 +35,9 @@ const BULLET_SPEED: f32 = 300.0;
 const BULLET_Z: f32 = 1.0;
 const NUM_BULLETS_SPAWN: i32 = 3;
 const KNOCKBACK: f32 = 20.0;
+const HP_FONT_SIZE: f32 = 20.0;
+const TEXT_COLOR: Color = Color::srgb_u8(191, 9, 47);
+const HP_TEXT_PADDING: f32 = 10.0;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum Paint {
@@ -87,6 +90,21 @@ struct Hero {
 struct Enemy {
     paint: Paint,
 }
+
+#[derive(Component)]
+struct HpUi;
+
+#[derive(Component)]
+struct LeadUi;
+
+#[derive(Component)]
+struct IronUi;
+
+#[derive(Component)]
+struct SilverUi;
+
+#[derive(Component)]
+struct GoldUi;
 
 #[derive(Component)]
 struct Wall;
@@ -161,6 +179,11 @@ fn main() {
             fire_bullets.run_if(on_timer(Duration::from_millis(300))),
         )
         .add_systems(Update, (move_bullets, bullet_collision))
+        .add_systems(Update, hp_ui)
+        .add_systems(
+            Update,
+            arena_state_ui.run_if(on_timer(Duration::from_millis(200))),
+        )
         .run();
 }
 
@@ -214,6 +237,78 @@ fn setup(
         Collider {
             half_size: Vec2::new(HERO_WIDTH / 2.0, HERO_HEIGHT / 2.0),
         },
+    ));
+
+    // HP UI
+    commands.spawn((
+        Text::new("HP: "),
+        TextFont {
+            font_size: FontSize::Px(HP_FONT_SIZE),
+            font: asset_server.load("FiraMono-Medium.ttf").into(),
+            ..default()
+        },
+        TextColor(TEXT_COLOR),
+        HpUi,
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(HP_TEXT_PADDING),
+            left: px(HP_TEXT_PADDING),
+            ..default()
+        },
+    ));
+
+    // Arena state UI
+    commands.spawn((
+        Node {
+            flex_direction: FlexDirection::Column,
+            position_type: PositionType::Absolute,
+            bottom: px(HP_TEXT_PADDING),
+            left: px(HP_TEXT_PADDING),
+            row_gap: px(5.0),
+            ..default()
+        },
+        children![
+            (
+                Text::new("Row 1."),
+                TextFont {
+                    font_size: FontSize::Px(HP_FONT_SIZE),
+                    font: asset_server.load("FiraMono-Medium.ttf").into(),
+                    ..default()
+                },
+                TextColor(Paint::Lead.sprite_color()),
+                LeadUi,
+            ),
+            (
+                Text::new("Row 2."),
+                TextFont {
+                    font_size: FontSize::Px(HP_FONT_SIZE),
+                    font: asset_server.load("FiraMono-Medium.ttf").into(),
+                    ..default()
+                },
+                TextColor(Paint::Iron.sprite_color()),
+                IronUi,
+            ),
+            (
+                Text::new("Row 3."),
+                TextFont {
+                    font_size: FontSize::Px(HP_FONT_SIZE),
+                    font: asset_server.load("FiraMono-Medium.ttf").into(),
+                    ..default()
+                },
+                TextColor(Paint::Silver.sprite_color()),
+                SilverUi,
+            ),
+            (
+                Text::new("Row 4."),
+                TextFont {
+                    font_size: FontSize::Px(HP_FONT_SIZE),
+                    font: asset_server.load("FiraMono-Medium.ttf").into(),
+                    ..default()
+                },
+                TextColor(Paint::Gold.sprite_color()),
+                GoldUi,
+            )
+        ],
     ));
 
     // Arena
@@ -654,4 +749,71 @@ fn bullet_collision(
             }
         }
     }
+}
+
+fn hp_ui(mut text: Single<&mut Text, With<HpUi>>, hero: Single<&Hero>) {
+    text.0 = format!("HP: {}", hero.hitpoints);
+}
+
+fn arena_state_ui(
+    mut lead_text: Single<
+        &mut Text,
+        (
+            With<LeadUi>,
+            Without<IronUi>,
+            Without<SilverUi>,
+            Without<GoldUi>,
+        ),
+    >,
+    mut iron_text: Single<
+        &mut Text,
+        (
+            Without<LeadUi>,
+            With<IronUi>,
+            Without<SilverUi>,
+            Without<GoldUi>,
+        ),
+    >,
+    mut silver_text: Single<
+        &mut Text,
+        (
+            Without<LeadUi>,
+            Without<IronUi>,
+            With<SilverUi>,
+            Without<GoldUi>,
+        ),
+    >,
+    mut gold_text: Single<
+        &mut Text,
+        (
+            Without<LeadUi>,
+            Without<IronUi>,
+            Without<SilverUi>,
+            With<GoldUi>,
+        ),
+    >,
+    paint_grid: ResMut<PaintGrid>,
+) {
+    let mut leadCount = 0.0;
+    let mut ironCount = 0.0;
+    let mut silverCount = 0.0;
+    let mut goldCount = 0.0;
+    let mut totalCount = 0.0;
+
+    for i in 0..paint_grid.cells.len() {
+        totalCount += 1.0;
+        let curr_paint = paint_grid.cells[i];
+        match curr_paint {
+            Paint::None => {}
+            Paint::Lead => leadCount += 1.0,
+            Paint::Iron => ironCount += 1.0,
+            Paint::Silver => silverCount += 1.0,
+            Paint::Gold => goldCount += 1.0,
+        }
+    }
+
+    lead_text.0 = format!("Lead: {:.2}%", leadCount / totalCount * 100.0);
+    iron_text.0 = format!("Iron: {:.2}%", ironCount / totalCount * 100.0);
+    silver_text.0 = format!("Silver: {:.2}%", silverCount / totalCount * 100.0);
+    gold_text.0 = format!("Gold: {:.2}%", goldCount / totalCount * 100.0);
 }
