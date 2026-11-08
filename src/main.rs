@@ -168,8 +168,10 @@ fn main() {
         )
         .init_state::<AppState>()
         .add_systems(OnEnter(AppState::Menu), setup_menu)
+        .add_systems(OnEnter(AppState::GameOver), setup_game_over)
         .add_systems(Startup, setup)
         .add_observer(on_activate_start_game.run_if(in_state(AppState::Menu)))
+        .add_observer(on_activate_start_game.run_if(in_state(AppState::GameOver)))
         .add_systems(OnEnter(AppState::Playing), setup_game)
         .add_systems(
             Update,
@@ -213,6 +215,7 @@ fn main() {
                 .run_if(on_timer(Duration::from_millis(200)))
                 .run_if(in_state(AppState::Playing)),
         )
+        .add_systems(Update, check_game_over.run_if(in_state(AppState::Playing)))
         .run();
 }
 
@@ -240,6 +243,45 @@ fn setup_menu(mut commands: Commands) {
             children![(Text::new("Play") /* TextFont, TextColor */,)]
         )],
         DespawnOnExit(AppState::Menu),
+    ));
+}
+
+fn setup_game_over(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn((
+        Node {
+            width: percent(100),
+            height: percent(100),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+        children![
+            (
+                Text::new("Game Over"),
+                TextFont {
+                    font_size: FontSize::Px(HP_FONT_SIZE),
+                    font: asset_server.load("FiraMono-Medium.ttf").into(),
+                    ..default()
+                },
+                TextColor(TEXT_COLOR),
+            ),
+            (
+                Button,
+                ActivateOnPress,
+                Hovered::default(),
+                Node {
+                    width: px(150),
+                    height: px(65),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(MENU_BUTTON_BG_COLOR),
+                children![(Text::new("Restart") /* TextFont, TextColor */,)]
+            )
+        ],
+        DespawnOnExit(AppState::GameOver),
     ));
 }
 
@@ -299,6 +341,7 @@ fn setup_game(
         Collider {
             half_size: Vec2::new(HERO_WIDTH / 2.0, HERO_HEIGHT / 2.0),
         },
+        DespawnOnExit(AppState::Playing),
     ));
 
     // HP UI
@@ -317,6 +360,7 @@ fn setup_game(
             left: px(HP_TEXT_PADDING),
             ..default()
         },
+        DespawnOnExit(AppState::Playing),
     ));
 
     // Arena state UI
@@ -371,6 +415,7 @@ fn setup_game(
                 GoldUi,
             )
         ],
+        DespawnOnExit(AppState::Playing),
     ));
 
     // Floor
@@ -402,6 +447,7 @@ fn setup_game(
             ..Sprite::from_image(floor_image_handle)
         },
         Transform::from_xyz(0.0, 0.0, FLOOR_Z),
+        DespawnOnExit(AppState::Playing),
     ));
 
     // Arena
@@ -413,6 +459,7 @@ fn setup_game(
             half_size: WALL_SIZE_LONG / 2.0,
         },
         Wall,
+        DespawnOnExit(AppState::Playing),
     ));
     // Bottom
     commands.spawn((
@@ -422,6 +469,7 @@ fn setup_game(
             half_size: WALL_SIZE_LONG / 2.0,
         },
         Wall,
+        DespawnOnExit(AppState::Playing),
     ));
     // Right
     commands.spawn((
@@ -431,6 +479,7 @@ fn setup_game(
             half_size: WALL_SIZE_TALL / 2.0,
         },
         Wall,
+        DespawnOnExit(AppState::Playing),
     ));
     // Left
     commands.spawn((
@@ -440,6 +489,7 @@ fn setup_game(
             half_size: WALL_SIZE_TALL / 2.0,
         },
         Wall,
+        DespawnOnExit(AppState::Playing),
     ));
 }
 
@@ -542,6 +592,7 @@ fn enemy_spawn(
         Collider {
             half_size: Vec2::new(ENEMY_WIDTH / 2.0, ENEMY_HEIGHT / 2.0),
         },
+        DespawnOnExit(AppState::Playing),
     ));
 }
 
@@ -701,7 +752,10 @@ fn fire_bullets(
     let direction =
         (world_cursor_position - hero_transform.translation.truncate()).normalize_or_zero();
 
-    commands.spawn((AudioPlayer::new(asset_server.load("shoot.wav")),));
+    commands.spawn((
+        AudioPlayer::new(asset_server.load("shoot.wav")),
+        PlaybackSettings::DESPAWN,
+    ));
     commands.spawn((
         Transform::from_xyz(
             hero_transform.translation.x,
@@ -716,6 +770,7 @@ fn fire_bullets(
         Collider {
             half_size: Vec2::new(BULLET_WIDTH / 2.0, BULLET_WIDTH / 2.0),
         },
+        DespawnOnExit(AppState::Playing),
     ));
 }
 
@@ -754,12 +809,16 @@ fn bullet_collision(
                     PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.1)),
                 ));
 
+                commands.spawn((
+                    AudioPlayer::new(asset_server.load("shoot.wav")),
+                    PlaybackSettings::DESPAWN,
+                ));
+
                 // Spawn bullets
                 for _ in 0..NUM_BULLETS_SPAWN {
                     let angle = rand::random_range(0.0..TAU);
                     let direction = Vec2::from_angle(angle).normalize_or_zero();
 
-                    commands.spawn((AudioPlayer::new(asset_server.load("shoot.wav")),));
                     commands.spawn((
                         Transform::from_xyz(
                             enemy_transform.translation.x,
@@ -772,6 +831,7 @@ fn bullet_collision(
                         Collider {
                             half_size: Vec2::new(BULLET_WIDTH / 2.0, BULLET_WIDTH / 2.0),
                         },
+                        DespawnOnExit(AppState::Playing),
                     ));
                 }
 
@@ -882,4 +942,10 @@ fn arena_state_ui(
 
 fn on_activate_start_game(_: On<Activate>, mut next_state: ResMut<NextState<AppState>>) {
     next_state.set(AppState::Playing);
+}
+
+fn check_game_over(hero: Single<&Hero>, mut next_state: ResMut<NextState<AppState>>) {
+    if hero.hitpoints <= 0 {
+        next_state.set(AppState::GameOver);
+    }
 }
