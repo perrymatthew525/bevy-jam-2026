@@ -258,7 +258,41 @@ fn setup_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
     ));
 }
 
-fn setup_game_over(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn setup_game_over(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    paint_grid: Res<PaintGrid>,
+) {
+    let mut high_score_message = String::new();
+    let mut lead_count = 0.0;
+    let mut iron_count = 0.0;
+    let mut silver_count = 0.0;
+    let mut gold_count = 0.0;
+    let mut total_count = 0.0;
+
+    for i in 0..paint_grid.cells.len() {
+        total_count += 1.0;
+        let curr_paint = paint_grid.cells[i];
+        match curr_paint {
+            Paint::None => {}
+            Paint::Lead => lead_count += 1.0,
+            Paint::Iron => iron_count += 1.0,
+            Paint::Silver => silver_count += 1.0,
+            Paint::Gold => gold_count += 1.0,
+        }
+    }
+    if gold_count > 0.0 {
+        high_score_message = format!("Score: {:.2}% gold", gold_count / total_count * 100.0);
+    } else if silver_count > 0.0 {
+        high_score_message = format!("Score: {:.2}% silver", silver_count / total_count * 100.0);
+    } else if iron_count > 0.0 {
+        high_score_message = format!("Score: {:.2}% iron", iron_count / total_count * 100.0);
+    } else if lead_count > 0.0 {
+        high_score_message = format!("Score: {:.2}% lead", lead_count / total_count * 100.0);
+    } else {
+        high_score_message = format!("You died immediately!")
+    }
+
     commands.spawn((
         Node {
             width: percent(100),
@@ -279,6 +313,14 @@ fn setup_game_over(mut commands: Commands, asset_server: Res<AssetServer>) {
                     ..default()
                 },
                 TextColor(TEXT_COLOR),
+            ),
+            (
+                Text::new(high_score_message),
+                TextFont {
+                    font_size: FontSize::Px(HP_FONT_SIZE),
+                    font: asset_server.load("FiraMono-Medium.ttf").into(),
+                    ..default()
+                },
             ),
             (
                 Button,
@@ -960,28 +1002,28 @@ fn arena_state_ui(
     >,
     paint_grid: ResMut<PaintGrid>,
 ) {
-    let mut leadCount = 0.0;
-    let mut ironCount = 0.0;
-    let mut silverCount = 0.0;
-    let mut goldCount = 0.0;
-    let mut totalCount = 0.0;
+    let mut lead_count = 0.0;
+    let mut iron_count = 0.0;
+    let mut silver_count = 0.0;
+    let mut gold_count = 0.0;
+    let mut total_count = 0.0;
 
     for i in 0..paint_grid.cells.len() {
-        totalCount += 1.0;
+        total_count += 1.0;
         let curr_paint = paint_grid.cells[i];
         match curr_paint {
             Paint::None => {}
-            Paint::Lead => leadCount += 1.0,
-            Paint::Iron => ironCount += 1.0,
-            Paint::Silver => silverCount += 1.0,
-            Paint::Gold => goldCount += 1.0,
+            Paint::Lead => lead_count += 1.0,
+            Paint::Iron => iron_count += 1.0,
+            Paint::Silver => silver_count += 1.0,
+            Paint::Gold => gold_count += 1.0,
         }
     }
 
-    lead_text.0 = format!("Lead: {:.2}%", leadCount / totalCount * 100.0);
-    iron_text.0 = format!("Iron: {:.2}%", ironCount / totalCount * 100.0);
-    silver_text.0 = format!("Silver: {:.2}%", silverCount / totalCount * 100.0);
-    gold_text.0 = format!("Gold: {:.2}%", goldCount / totalCount * 100.0);
+    lead_text.0 = format!("Lead: {:.2}%", lead_count / total_count * 100.0);
+    iron_text.0 = format!("Iron: {:.2}%", iron_count / total_count * 100.0);
+    silver_text.0 = format!("Silver: {:.2}%", silver_count / total_count * 100.0);
+    gold_text.0 = format!("Gold: {:.2}%", gold_count / total_count * 100.0);
 }
 
 fn on_activate_start_game(_: On<Activate>, mut next_state: ResMut<NextState<AppState>>) {
