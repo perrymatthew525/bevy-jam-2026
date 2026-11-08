@@ -35,7 +35,7 @@ const BULLET_Z: f32 = 1.0;
 const NUM_BULLETS_SPAWN: i32 = 3;
 const KNOCKBACK: f32 = 20.0;
 const HP_FONT_SIZE: f32 = 20.0;
-const TEXT_COLOR: Color = Color::srgb_u8(191, 9, 47);
+const TEXT_COLOR_RED: Color = Color::srgb_u8(191, 9, 47);
 const HP_TEXT_PADDING: f32 = 10.0;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -160,6 +160,17 @@ impl Default for MetaSpawnTimer {
     }
 }
 
+#[derive(Deref, DerefMut, Resource)]
+struct HurtTimer(Timer);
+
+impl Default for HurtTimer {
+    fn default() -> Self {
+        let mut timer = Timer::from_seconds(0.15, TimerMode::Once);
+        timer.finish();
+        Self(timer)
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins(
@@ -220,6 +231,7 @@ fn main() {
                 .run_if(in_state(AppState::Playing)),
         )
         .add_systems(Update, check_game_over.run_if(in_state(AppState::Playing)))
+        .add_systems(Update, tick_hurt_timer.run_if(in_state(AppState::Playing)))
         .run();
 }
 
@@ -312,7 +324,7 @@ fn setup_game_over(
                     font: asset_server.load("FiraMono-Medium.ttf").into(),
                     ..default()
                 },
-                TextColor(TEXT_COLOR),
+                TextColor(TEXT_COLOR_RED),
             ),
             (
                 Text::new(high_score_message),
@@ -378,6 +390,7 @@ fn setup_game(
     // Spawn Timer
     commands.insert_resource(SpawnTimer::default());
     commands.insert_resource(MetaSpawnTimer::default());
+    commands.insert_resource(HurtTimer::default());
 
     // Hero
     let hero_layout = TextureAtlasLayout::from_grid(UVec2::new(16, 24), 4, 1, None, None);
@@ -412,7 +425,7 @@ fn setup_game(
             font: asset_server.load("FiraMono-Medium.ttf").into(),
             ..default()
         },
-        TextColor(TEXT_COLOR),
+        TextColor(TEXT_COLOR_RED),
         HpUi,
         Node {
             position_type: PositionType::Absolute,
@@ -603,6 +616,7 @@ fn wall_collision(
 fn enemy_hero_collision(
     mut hero: Single<(&Transform, &Collider, &mut Hero), With<Hero>>,
     mut enemy_query: Query<(&mut Transform, &Collider), (With<Enemy>, Without<Hero>)>,
+    mut hurt_timer: ResMut<HurtTimer>,
 ) {
     let (hero_transform, hero_collider, hero_self) = &mut *hero;
     for (mut enemy_transform, enemy_collider) in &mut enemy_query {
@@ -619,6 +633,7 @@ fn enemy_hero_collision(
             let delta = enemy_bounding_rect.center() - hero_bounding_rect.center();
             let overlap =
                 hero_bounding_rect.half_size() + enemy_bounding_rect.half_size() - delta.abs();
+            hurt_timer.reset();
             enemy_transform.translation.x += delta.x.signum() * (overlap.x + KNOCKBACK);
             enemy_transform.translation.y += delta.y.signum() * (overlap.y + KNOCKBACK);
             hero_self.hitpoints = hero_self.hitpoints.saturating_sub(ENEMY_DAMAGE);
@@ -780,6 +795,7 @@ fn recolor_sprite(
         ),
         Or<(With<Hero>, With<Enemy>)>,
     >,
+    mut hurt_timer: ResMut<HurtTimer>,
 ) {
     for (transform, mut sprite, hero, enemy) in query {
         let cell_col =
@@ -793,8 +809,14 @@ fn recolor_sprite(
 
         let paint_grid_width = paint_grid.width;
         let ground_color_cell = paint_grid.cells[cell_row * paint_grid_width + cell_col];
-        if sprite.color != ground_color_cell.sprite_color() {
-            sprite.color = ground_color_cell.sprite_color();
+
+        let mut final_color = ground_color_cell.sprite_color();
+        if !hurt_timer.is_finished() && hero.is_some() {
+            final_color = TEXT_COLOR_RED;
+        }
+
+        if sprite.color != final_color {
+            sprite.color = final_color;
             if let Some(mut hero) = hero {
                 hero.paint = ground_color_cell;
             }
@@ -1034,4 +1056,8 @@ fn check_game_over(hero: Single<&Hero>, mut next_state: ResMut<NextState<AppStat
     if hero.hitpoints <= 0 {
         next_state.set(AppState::GameOver);
     }
+}
+
+fn tick_hurt_timer(mut hurt_timer: ResMut<HurtTimer>, time: Res<Time>) {
+    hurt_timer.tick(time.delta());
 }
