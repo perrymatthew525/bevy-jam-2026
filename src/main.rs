@@ -3,8 +3,6 @@ use std::time::Duration;
 
 use bevy::asset::{AssetMetaCheck, RenderAssetUsages};
 use bevy::audio::Volume;
-use bevy::color::palettes::{basic, css};
-use bevy::ecs::system::command;
 use bevy::math::ops::floor;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
@@ -12,7 +10,6 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::time::common_conditions::on_timer;
 use bevy::ui_widgets::{Activate, ActivateOnPress, Button};
 
-const ARENA_COLOR: Color = Color::srgb(0.0, 0.25, 0.8);
 const ARENA_HALF_WIDTH: f32 = 500.0;
 const WALL_THICKNESS: f32 = 30.0;
 const WALL_LENGTH: f32 = ARENA_HALF_WIDTH * 2.0;
@@ -40,7 +37,6 @@ const KNOCKBACK: f32 = 20.0;
 const HP_FONT_SIZE: f32 = 20.0;
 const TEXT_COLOR: Color = Color::srgb_u8(191, 9, 47);
 const HP_TEXT_PADDING: f32 = 10.0;
-const MENU_BUTTON_BG_COLOR: Color = Color::srgb_u8(190, 190, 190);
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum Paint {
@@ -113,11 +109,6 @@ struct GoldUi;
 struct Wall;
 
 #[derive(Component)]
-struct Health {
-    level: f32,
-}
-
-#[derive(Component)]
 struct Velocity(Vec2);
 
 #[derive(Component)]
@@ -140,7 +131,6 @@ struct FloorImage(Handle<Image>);
 struct PaintGrid {
     width: usize,
     height: usize,
-    cell_size: f32,
     cells: Vec<Paint>,
 }
 
@@ -150,6 +140,24 @@ enum AppState {
     Menu,
     Playing,
     GameOver,
+}
+
+#[derive(Deref, DerefMut, Resource)]
+struct SpawnTimer(Timer);
+
+impl Default for SpawnTimer {
+    fn default() -> Self {
+        Self(Timer::from_seconds(2.0, TimerMode::Repeating))
+    }
+}
+
+#[derive(Deref, DerefMut, Resource)]
+struct MetaSpawnTimer(Timer);
+
+impl Default for MetaSpawnTimer {
+    fn default() -> Self {
+        Self(Timer::from_seconds(30.0, TimerMode::Repeating))
+    }
 }
 
 fn main() {
@@ -169,6 +177,7 @@ fn main() {
         .init_state::<AppState>()
         .add_systems(OnEnter(AppState::Menu), setup_menu)
         .add_systems(OnEnter(AppState::GameOver), setup_game_over)
+        .insert_resource(ClearColor(Paint::None.sprite_color()))
         .add_systems(Startup, setup)
         .add_observer(on_activate_start_game.run_if(in_state(AppState::Menu)))
         .add_observer(on_activate_start_game.run_if(in_state(AppState::GameOver)))
@@ -179,12 +188,7 @@ fn main() {
                 .chain()
                 .run_if(in_state(AppState::Playing)),
         )
-        .add_systems(
-            Update,
-            enemy_spawn
-                .run_if(on_timer(Duration::from_millis(500)))
-                .run_if(in_state(AppState::Playing)),
-        )
+        .add_systems(Update, enemy_spawn.run_if(in_state(AppState::Playing)))
         .add_systems(
             Update,
             (enemy_movement, enemy_collision, enemy_hero_collision)
@@ -206,7 +210,7 @@ fn main() {
         )
         .add_systems(
             Update,
-            (move_bullets, bullet_collision).run_if(in_state(AppState::Playing)),
+            (bullet_despawn, move_bullets, bullet_collision).run_if(in_state(AppState::Playing)),
         )
         .add_systems(Update, hp_ui.run_if(in_state(AppState::Playing)))
         .add_systems(
@@ -219,7 +223,7 @@ fn main() {
         .run();
 }
 
-fn setup_menu(mut commands: Commands) {
+fn setup_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn((
         Node {
             width: percent(100),
@@ -228,6 +232,7 @@ fn setup_menu(mut commands: Commands) {
             align_items: AlignItems::Center,
             ..default()
         },
+        BackgroundColor(Paint::None.ground_color()),
         children![(
             Button,
             ActivateOnPress,
@@ -239,8 +244,15 @@ fn setup_menu(mut commands: Commands) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(MENU_BUTTON_BG_COLOR),
-            children![(Text::new("Play") /* TextFont, TextColor */,)]
+            BackgroundColor(Paint::None.sprite_color()),
+            children![(
+                Text::new("Play"),
+                TextFont {
+                    font_size: FontSize::Px(HP_FONT_SIZE),
+                    font: asset_server.load("FiraMono-Medium.ttf").into(),
+                    ..default()
+                },
+            )]
         )],
         DespawnOnExit(AppState::Menu),
     ));
@@ -254,8 +266,10 @@ fn setup_game_over(mut commands: Commands, asset_server: Res<AssetServer>) {
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             flex_direction: FlexDirection::Column,
+            row_gap: px(10.0),
             ..default()
         },
+        BackgroundColor(Paint::None.ground_color()),
         children![
             (
                 Text::new("Game Over"),
@@ -277,7 +291,7 @@ fn setup_game_over(mut commands: Commands, asset_server: Res<AssetServer>) {
                     align_items: AlignItems::Center,
                     ..default()
                 },
-                BackgroundColor(MENU_BUTTON_BG_COLOR),
+                BackgroundColor(Paint::None.sprite_color()),
                 children![(Text::new("Restart") /* TextFont, TextColor */,)]
             )
         ],
@@ -319,6 +333,10 @@ fn setup_game(
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut images: ResMut<Assets<Image>>,
 ) {
+    // Spawn Timer
+    commands.insert_resource(SpawnTimer::default());
+    commands.insert_resource(MetaSpawnTimer::default());
+
     // Hero
     let hero_layout = TextureAtlasLayout::from_grid(UVec2::new(16, 24), 4, 1, None, None);
     let hero_layout_handle = texture_atlas_layouts.add(hero_layout);
@@ -424,7 +442,6 @@ fn setup_game(
     let paint_grid = PaintGrid {
         width: paint_width,
         height: paint_height,
-        cell_size: PAINT_CELL_SIZE,
         cells: vec![Paint::None; paint_width * paint_height],
     };
     let floor_image = Image::new_fill(
@@ -571,7 +588,22 @@ fn enemy_spawn(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     enemy_layout: Res<EnemyLayout>,
+    mut spawn_timer: ResMut<SpawnTimer>,
+    mut meta_spawn_timer: ResMut<MetaSpawnTimer>,
+    time: Res<Time>,
 ) {
+    spawn_timer.tick(time.delta());
+    meta_spawn_timer.tick(time.delta());
+
+    if meta_spawn_timer.just_finished() {
+        let old_duration = spawn_timer.duration();
+        spawn_timer.set_duration((old_duration / 2).max(Duration::from_millis(100)));
+    }
+
+    if !spawn_timer.just_finished() {
+        return;
+    }
+
     let x =
         rand::random_range(-ARENA_HALF_WIDTH + WALL_THICKNESS..ARENA_HALF_WIDTH - WALL_THICKNESS);
     let y =
@@ -777,6 +809,18 @@ fn fire_bullets(
 fn move_bullets(time: Res<Time>, bullet_query: Query<(&Velocity, &mut Transform), With<Bullet>>) {
     for (b_velo, mut b_trans) in bullet_query {
         b_trans.translation += (b_velo.0 * time.delta_secs()).extend(0.0);
+    }
+}
+
+fn bullet_despawn(bullet_query: Query<(&Transform, Entity), With<Bullet>>, mut commands: Commands) {
+    for (bullet_transform, bullet_entity) in &bullet_query {
+        if bullet_transform.translation.x > ARENA_HALF_WIDTH
+            || bullet_transform.translation.x < -ARENA_HALF_WIDTH
+            || bullet_transform.translation.y > ARENA_HALF_WIDTH
+            || bullet_transform.translation.y < -ARENA_HALF_WIDTH
+        {
+            commands.entity(bullet_entity).despawn();
+        }
     }
 }
 
