@@ -1,8 +1,10 @@
+use std::f32::consts::TAU;
 use std::time::Duration;
 
 use bevy::asset::{AssetMetaCheck, RenderAssetUsages};
-use bevy::color::palettes::css::BLACK;
+use bevy::audio::Volume;
 use bevy::color::palettes::{basic, css};
+use bevy::ecs::system::command;
 use bevy::math::ops::floor;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -22,10 +24,17 @@ const HERO_Z: f32 = 1.0;
 const ENEMY_SPEED: f32 = 50.0;
 const ENEMY_WIDTH: f32 = 16.0;
 const ENEMY_HEIGHT: f32 = 24.0;
+const ENEMY_DAMAGE: u32 = 10;
 const ENEMY_Z: f32 = 1.0;
 const FLOOR_Z: f32 = 0.0;
 const PAINT_CELL_SIZE: f32 = 2.0;
 const SPLAT_RADIUS: i32 = 10;
+const BULLET_WIDTH: f32 = 5.0;
+const BULLET_SIZE: Vec2 = Vec2::new(BULLET_WIDTH, BULLET_WIDTH);
+const BULLET_SPEED: f32 = 300.0;
+const BULLET_Z: f32 = 1.0;
+const NUM_BULLETS_SPAWN: i32 = 3;
+const KNOCKBACK: f32 = 20.0;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum Paint {
@@ -37,27 +46,47 @@ enum Paint {
 }
 
 impl Paint {
-    fn color(self) -> Color {
+    fn sprite_color(self) -> Color {
         match self {
-            // MP | TODO: Use the real colors
-            Self::None => css::GREEN.into(),
-            Self::Lead => css::DIM_GRAY.into(),
-            Self::Iron => css::SLATE_GRAY.into(),
-            Self::Silver => basic::SILVER.into(),
-            Self::Gold => css::GOLD.into(),
+            Self::None => Srgba::hex("#00050e").unwrap().into(),
+            Self::Lead => Srgba::hex("#3798dd").unwrap().into(),
+            Self::Iron => Srgba::hex("#ed866c").unwrap().into(),
+            Self::Silver => Srgba::hex("#fafafa").unwrap().into(),
+            Self::Gold => Srgba::hex("#fff0bf").unwrap().into(),
         }
     }
 
-    fn sprite_color(self) -> Color {
-        self.color().mix(&Color::WHITE, 0.2)
+    fn ground_color(self) -> Color {
+        match self {
+            Self::None => Srgba::hex("#132440").unwrap().into(),
+            Self::Lead => Srgba::hex("#16476A").unwrap().into(),
+            Self::Iron => Srgba::hex("#b74326").unwrap().into(),
+            Self::Silver => Srgba::hex("#9dc7e5").unwrap().into(),
+            Self::Gold => Srgba::hex("#eeca53").unwrap().into(),
+        }
+    }
+
+    fn next_color(self) -> Paint {
+        match self {
+            Self::None => Paint::Lead,
+            Self::Lead => Paint::Iron,
+            Self::Iron => Paint::Silver,
+            Self::Silver => Paint::Gold,
+            Self::Gold => Paint::None,
+        }
     }
 }
 
 #[derive(Component)]
-struct Hero;
+struct Hero {
+    paint: Paint,
+    hitpoints: u32,
+}
 
 #[derive(Component)]
-struct Enemy;
+struct Enemy {
+    paint: Paint,
+}
 
 #[derive(Component)]
 struct Wall;
@@ -65,6 +94,14 @@ struct Wall;
 #[derive(Component)]
 struct Health {
     level: f32,
+}
+
+#[derive(Component)]
+struct Velocity(Vec2);
+
+#[derive(Component)]
+struct Bullet {
+    paint: Paint,
 }
 
 #[derive(Component)]
@@ -105,14 +142,25 @@ fn main() {
             Update,
             (hero_movement, wall_collision, update_camera).chain(),
         )
-        .add_systems(Update, enemy_spawn.run_if(on_timer(Duration::from_secs(2))))
-        .add_systems(Update, (enemy_movement, enemy_collision))
+        .add_systems(
+            Update,
+            enemy_spawn.run_if(on_timer(Duration::from_millis(500))),
+        )
+        .add_systems(
+            Update,
+            (enemy_movement, enemy_collision, enemy_hero_collision),
+        )
         .add_systems(
             Update,
             animate_sprites.run_if(on_timer(Duration::from_millis(200))),
         )
         .add_systems(Update, draw_paint)
         .add_systems(Update, recolor_sprite)
+        .add_systems(
+            Update,
+            fire_bullets.run_if(on_timer(Duration::from_millis(300))),
+        )
+        .add_systems(Update, (move_bullets, bullet_collision))
         .run();
 }
 
@@ -128,6 +176,15 @@ fn setup(
             scale: 0.5,
             ..OrthographicProjection::default_2d()
         }),
+    ));
+
+    // Music
+    commands.spawn((
+        AudioPlayer::new(asset_server.load("main.ogg")),
+        PlaybackSettings {
+            ..PlaybackSettings::LOOP
+        }
+        .with_volume(Volume::Linear(0.1)),
     ));
 
     // Enemy layout
@@ -149,7 +206,10 @@ fn setup(
                 },
             )
         },
-        Hero,
+        Hero {
+            paint: Paint::None,
+            hitpoints: 100,
+        },
         Transform::from_xyz(0.0, 0.0, HERO_Z),
         Collider {
             half_size: Vec2::new(HERO_WIDTH / 2.0, HERO_HEIGHT / 2.0),
@@ -159,7 +219,7 @@ fn setup(
     // Arena
     // Top
     commands.spawn((
-        Sprite::from_color(ARENA_COLOR, WALL_SIZE_LONG),
+        Sprite::from_color(Paint::None.sprite_color(), WALL_SIZE_LONG),
         Transform::from_translation(Vec3::new(0.0, WALL_LENGTH / 2.0, WALL_Z)),
         Collider {
             half_size: WALL_SIZE_LONG / 2.0,
@@ -168,7 +228,7 @@ fn setup(
     ));
     // Bottom
     commands.spawn((
-        Sprite::from_color(ARENA_COLOR, WALL_SIZE_LONG),
+        Sprite::from_color(Paint::None.sprite_color(), WALL_SIZE_LONG),
         Transform::from_translation(Vec3::new(0.0, -(WALL_LENGTH / 2.0), WALL_Z)),
         Collider {
             half_size: WALL_SIZE_LONG / 2.0,
@@ -177,7 +237,7 @@ fn setup(
     ));
     // Right
     commands.spawn((
-        Sprite::from_color(ARENA_COLOR, WALL_SIZE_TALL),
+        Sprite::from_color(Paint::None.sprite_color(), WALL_SIZE_TALL),
         Transform::from_translation(Vec3::new(WALL_LENGTH / 2.0, 0.0, WALL_Z)),
         Collider {
             half_size: WALL_SIZE_TALL / 2.0,
@@ -186,7 +246,7 @@ fn setup(
     ));
     // Left
     commands.spawn((
-        Sprite::from_color(ARENA_COLOR, WALL_SIZE_TALL),
+        Sprite::from_color(Paint::None.sprite_color(), WALL_SIZE_TALL),
         Transform::from_translation(Vec3::new(-(WALL_LENGTH / 2.0), 0.0, WALL_Z)),
         Collider {
             half_size: WALL_SIZE_TALL / 2.0,
@@ -210,7 +270,7 @@ fn setup(
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        &(Paint::None.color().to_srgba().to_u8_array()),
+        &(Paint::None.ground_color().to_srgba().to_u8_array()),
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
@@ -274,6 +334,32 @@ fn wall_collision(
     }
 }
 
+fn enemy_hero_collision(
+    mut hero: Single<(&Transform, &Collider, &mut Hero), With<Hero>>,
+    mut enemy_query: Query<(&mut Transform, &Collider), (With<Enemy>, Without<Hero>)>,
+) {
+    let (hero_transform, hero_collider, hero_self) = &mut *hero;
+    for (mut enemy_transform, enemy_collider) in &mut enemy_query {
+        let hero_bounding_rect = Aabb2d::new(
+            hero_transform.translation.truncate(),
+            hero_collider.half_size,
+        );
+        let enemy_bounding_rect = Aabb2d::new(
+            enemy_transform.translation.truncate(),
+            enemy_collider.half_size,
+        );
+
+        if hero_bounding_rect.intersects(&enemy_bounding_rect) {
+            let delta = enemy_bounding_rect.center() - hero_bounding_rect.center();
+            let overlap =
+                hero_bounding_rect.half_size() + enemy_bounding_rect.half_size() - delta.abs();
+            enemy_transform.translation.x += delta.x.signum() * (overlap.x + KNOCKBACK);
+            enemy_transform.translation.y += delta.y.signum() * (overlap.y + KNOCKBACK);
+            hero_self.hitpoints = hero_self.hitpoints.saturating_sub(ENEMY_DAMAGE);
+        }
+    }
+}
+
 fn enemy_spawn(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -285,7 +371,7 @@ fn enemy_spawn(
         rand::random_range(-ARENA_HALF_WIDTH + WALL_THICKNESS..ARENA_HALF_WIDTH - WALL_THICKNESS);
     commands.spawn((
         Sprite {
-            color: Color::srgba(01.0, 0.2, 10.3, 1.0),
+            color: Paint::None.sprite_color(),
             ..Sprite::from_atlas_image(
                 asset_server.load("Enemy0.png"),
                 TextureAtlas {
@@ -294,7 +380,7 @@ fn enemy_spawn(
                 },
             )
         },
-        Enemy,
+        Enemy { paint: Paint::None },
         Transform::from_translation(Vec3::new(x, y, ENEMY_Z)),
         Collider {
             half_size: Vec2::new(ENEMY_WIDTH / 2.0, ENEMY_HEIGHT / 2.0),
@@ -396,16 +482,24 @@ fn draw_paint(
             let col = col as usize;
             let paint_grid_width = paint_grid.width;
             paint_grid.cells[row * paint_grid_width + col] = Paint::Lead;
-            let _ = image.set_color_at(col as u32, row as u32, Paint::Lead.color());
+            let _ = image.set_color_at(col as u32, row as u32, Paint::Lead.ground_color());
         }
     }
 }
 
 fn recolor_sprite(
     paint_grid: Res<PaintGrid>,
-    query: Query<(&Transform, &mut Sprite), Or<(With<Hero>, With<Enemy>)>>,
+    query: Query<
+        (
+            &Transform,
+            &mut Sprite,
+            Option<&mut Hero>,
+            Option<&mut Enemy>,
+        ),
+        Or<(With<Hero>, With<Enemy>)>,
+    >,
 ) {
-    for (transform, mut sprite) in query {
+    for (transform, mut sprite, hero, enemy) in query {
         let cell_col =
             floor((transform.translation.x + ARENA_HALF_WIDTH) / PAINT_CELL_SIZE) as usize;
         let cell_row =
@@ -419,6 +513,145 @@ fn recolor_sprite(
         let ground_color_cell = paint_grid.cells[cell_row * paint_grid_width + cell_col];
         if sprite.color != ground_color_cell.sprite_color() {
             sprite.color = ground_color_cell.sprite_color();
+            if let Some(mut hero) = hero {
+                hero.paint = ground_color_cell;
+            }
+            if let Some(mut enemy) = enemy {
+                enemy.paint = ground_color_cell;
+            }
+        }
+    }
+}
+
+fn fire_bullets(
+    hero_query: Single<(&Transform, &Hero), With<Hero>>,
+    window: Single<&Window>,
+    camera_query: Single<(&Camera, &GlobalTransform)>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+) {
+    let (camera, camera_transform) = *camera_query;
+    let Some(cursor_position) = window.cursor_position() else {
+        return;
+    };
+    let Ok(world_cursor_position) = camera.viewport_to_world_2d(camera_transform, cursor_position)
+    else {
+        return;
+    };
+
+    let (hero_transform, hero_self) = *hero_query;
+
+    let direction =
+        (world_cursor_position - hero_transform.translation.truncate()).normalize_or_zero();
+
+    commands.spawn((AudioPlayer::new(asset_server.load("shoot.wav")),));
+    commands.spawn((
+        Transform::from_xyz(
+            hero_transform.translation.x,
+            hero_transform.translation.y,
+            BULLET_Z,
+        ),
+        Sprite::from_color(hero_self.paint.sprite_color(), BULLET_SIZE),
+        Velocity(direction * BULLET_SPEED),
+        Bullet {
+            paint: hero_self.paint,
+        },
+        Collider {
+            half_size: Vec2::new(BULLET_WIDTH / 2.0, BULLET_WIDTH / 2.0),
+        },
+    ));
+}
+
+fn move_bullets(time: Res<Time>, bullet_query: Query<(&Velocity, &mut Transform), With<Bullet>>) {
+    for (b_velo, mut b_trans) in bullet_query {
+        b_trans.translation += (b_velo.0 * time.delta_secs()).extend(0.0);
+    }
+}
+
+fn bullet_collision(
+    bullet_query: Query<(&Transform, &Collider, Entity, &Bullet), With<Bullet>>,
+    enemy_query: Query<(&Transform, &Collider, Entity, &Enemy), With<Enemy>>,
+    mut commands: Commands,
+    mut paint_grid: ResMut<PaintGrid>,
+    floor_image: Res<FloorImage>,
+    mut images: ResMut<Assets<Image>>,
+    asset_server: Res<AssetServer>,
+) {
+    for (bullet_transform, bullet_collider, bullet_entity, bullet) in &bullet_query {
+        for (enemy_transform, enemy_collider, enemy_entity, enemy) in &enemy_query {
+            let bullet_bounding_rect = Aabb2d::new(
+                bullet_transform.translation.truncate(),
+                bullet_collider.half_size,
+            );
+            let enemy_bounding_rect = Aabb2d::new(
+                enemy_transform.translation.truncate(),
+                enemy_collider.half_size,
+            );
+
+            if bullet_bounding_rect.intersects(&enemy_bounding_rect) && bullet.paint == enemy.paint
+            {
+                commands.entity(bullet_entity).despawn();
+                commands.entity(enemy_entity).despawn();
+                commands.spawn((
+                    AudioPlayer::new(asset_server.load("Powerstrip_Click_2.wav")),
+                    PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.1)),
+                ));
+
+                // Spawn bullets
+                for _ in 0..NUM_BULLETS_SPAWN {
+                    let angle = rand::random_range(0.0..TAU);
+                    let direction = Vec2::from_angle(angle).normalize_or_zero();
+
+                    commands.spawn((AudioPlayer::new(asset_server.load("shoot.wav")),));
+                    commands.spawn((
+                        Transform::from_xyz(
+                            enemy_transform.translation.x,
+                            enemy_transform.translation.y,
+                            BULLET_Z,
+                        ),
+                        Sprite::from_color(enemy.paint.sprite_color(), BULLET_SIZE),
+                        Velocity(direction * BULLET_SPEED),
+                        Bullet { paint: enemy.paint },
+                        Collider {
+                            half_size: Vec2::new(BULLET_WIDTH / 2.0, BULLET_WIDTH / 2.0),
+                        },
+                    ));
+                }
+
+                // Paint the ground
+                let cell_column =
+                    floor((enemy_transform.translation.x + ARENA_HALF_WIDTH) / PAINT_CELL_SIZE);
+                let cell_row =
+                    floor((ARENA_HALF_WIDTH - enemy_transform.translation.y) / PAINT_CELL_SIZE);
+                let Some(mut image) = images.get_mut(&floor_image.0) else {
+                    return;
+                };
+                for col in cell_column as i32 - SPLAT_RADIUS..=cell_column as i32 + SPLAT_RADIUS {
+                    for row in cell_row as i32 - SPLAT_RADIUS..=cell_row as i32 + SPLAT_RADIUS {
+                        if !(0..paint_grid.width as i32).contains(&col)
+                            || !(0..paint_grid.height as i32).contains(&row)
+                        {
+                            continue;
+                        }
+
+                        let dc = cell_column as i32 - col;
+                        let dr = cell_row as i32 - row;
+                        if (dc * dc) + (dr * dr) > (SPLAT_RADIUS * SPLAT_RADIUS) {
+                            continue;
+                        }
+
+                        let row = row as usize;
+                        let col = col as usize;
+                        let paint_grid_width = paint_grid.width;
+                        paint_grid.cells[row * paint_grid_width + col] = enemy.paint.next_color();
+                        let _ = image.set_color_at(
+                            col as u32,
+                            row as u32,
+                            enemy.paint.next_color().ground_color(),
+                        );
+                    }
+                }
+            }
         }
     }
 }

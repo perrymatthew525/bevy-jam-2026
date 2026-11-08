@@ -16,7 +16,7 @@ opt-level = 1
 opt-level = 3
 
 [dependencies]
-bevy = "0.20"
+bevy = { version = "0.20", features = ["wav"] }
 rand = "0.10.3"
 
 # These lints may be important signals about code quality, but normal Bevy code
