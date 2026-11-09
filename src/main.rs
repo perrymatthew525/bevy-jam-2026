@@ -568,9 +568,10 @@ fn setup_game(
 fn hero_movement(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    mut hero: Single<&mut Transform, With<Hero>>,
+    mut hero: Single<(&mut Transform, &mut Sprite), With<Hero>>,
 ) {
     let mut direction = Vec2::ZERO;
+    let (hero_transform, hero_sprite) = &mut *hero;
 
     if keys.pressed(KeyCode::ArrowUp) || keys.pressed(KeyCode::KeyW) {
         direction.y += 1.0;
@@ -586,7 +587,14 @@ fn hero_movement(
     }
     direction = direction.normalize_or_zero();
 
-    hero.translation += (direction * HERO_SPEED * time.delta_secs()).extend(0.0);
+    if direction.x > 0.0 {
+        hero_sprite.flip_x = false;
+    }
+    if direction.x < 0.0 {
+        hero_sprite.flip_x = true;
+    }
+
+    hero_transform.translation += (direction * HERO_SPEED * time.delta_secs()).extend(0.0);
 }
 
 fn wall_collision(
@@ -694,11 +702,20 @@ fn enemy_spawn(
 fn enemy_movement(
     time: Res<Time>,
     hero_transform: Single<&Transform, With<Hero>>,
-    mut enemy_transforms: Query<&mut Transform, (With<Enemy>, Without<Hero>)>,
+    mut enemies: Query<(&mut Transform, &mut Sprite), (With<Enemy>, Without<Hero>)>,
 ) {
     let speed = ENEMY_SPEED * time.delta_secs();
     let target = hero_transform.translation;
-    for mut enemy_transform in &mut enemy_transforms {
+    for enemy in &mut enemies {
+        let (mut enemy_transform, mut enemy_sprite) = enemy;
+
+        if target.x < enemy_transform.translation.x {
+            enemy_sprite.flip_x = true;
+        }
+        if target.x > enemy_transform.translation.x {
+            enemy_sprite.flip_x = false;
+        }
+
         enemy_transform.translation = enemy_transform.translation.move_towards(target, speed);
     }
 }
